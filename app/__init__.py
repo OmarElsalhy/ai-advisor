@@ -1,0 +1,1 @@
+"""ShopSpace AI Business Advisor."""
