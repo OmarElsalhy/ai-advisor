@@ -1,3 +1,0 @@
-
-
-const defultFont= 'JosefinSans';
