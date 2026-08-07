@@ -10,11 +10,11 @@ WORKDIR /app
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
 # Copy and install Python dependencies
-COPY ai-advisor/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY ai-advisor/app ./app
+COPY app ./app
 
 # Copy knowledge base
 COPY general_guides /knowledge/general_guides
