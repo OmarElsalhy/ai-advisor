@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 # Logging configuration
 import sys
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -80,20 +79,21 @@ class ChatResponse(BaseModel):
 
 
 def verify_api_key(x_api_key: str | None = Header(default=None)) -> None:
-    """API key check (developer-friendly):
-    - If APP_API_KEY is empty: allow all requests (no key required).
-    - If APP_API_KEY is set: allow valid header, but also allow missing header for local testing
-      while logging a warning. This makes local testing easier without changing client code.
+    """API key check.
+
+    - If APP_API_KEY is empty: allow all requests (local dev only).
+    - If APP_API_KEY is set: require a valid X-API-Key header, otherwise reject
+      with 401. No silent bypass — an invalid/missing key must never be allowed
+      through once a key is configured.
     """
     if not APP_API_KEY:
         # No API key configured — allow all requests (local dev)
         return
-    # If a valid key was provided, allow
+
     if x_api_key and secrets.compare_digest(x_api_key, APP_API_KEY):
         return
-    # Otherwise, allow anyway but log a warning to indicate insecure access for tests
-    logger.warning("X-API-Key missing or invalid — allowing request for local testing.")
-    return
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key")
 
 
 @app.get("/health", tags=["system"])
@@ -118,16 +118,16 @@ def health() -> dict:
         }
 
 
-@app.post("/chat", tags=["advisor"], dependencies=[Depends(verify_api_key)])
+@app.post("/chat", response_model=ChatResponse, tags=["advisor"], dependencies=[Depends(verify_api_key)])
 def chat(request: ChatRequest, http_request: Request):
     request_id = str(uuid.uuid4())
     logger.info(f"[{request_id}] Chat request from user_id={request.user_id}, session_id={request.session_id}")
-    
+
     try:
         session_id = ensure_session(request.session_id, request.user_id)
         add_message(session_id, "user", request.message)
         logger.debug(f"[{request_id}] Message saved to session {session_id}")
-        
+
         matches = retriever.search(request.message)
         if not matches:
             logger.warning(f"[{request_id}] No matches found in knowledge base")
@@ -137,7 +137,7 @@ def chat(request: ChatRequest, http_request: Request):
             f"[المصدر: {item['metadata']['title']}]\n{item['content']}" for item in matches
         )
         logger.debug(f"[{request_id}] Retrieved {len(matches)} matches from knowledge base")
-        
+
         try:
             response_text = answer(request.message, context)
             logger.debug(f"[{request_id}] Generated response from LLM")
@@ -161,11 +161,17 @@ def chat(request: ChatRequest, http_request: Request):
                     "business_type": metadata["business_type"],
                 }
             )
-        
+
         add_message(session_id, "assistant", response_text, sources)
         logger.info(f"[{request_id}] Chat completed successfully for session {session_id}")
-        # Return only the answer string by default (frontend displays this)
-        return {"answer": response_text}
+
+        return {
+            "session_id": session_id,
+            "answer": response_text,
+            "sources": sources,
+            "disclaimer": DISCLAIMER,
+        }
+
     except HTTPException:
         raise
     except Exception as e:
