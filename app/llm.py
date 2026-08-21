@@ -18,7 +18,7 @@ def answer(question: str, context: str) -> str:
         raise RuntimeError(error_msg)
     
     logger.info("Calling Qwen LLM for response generation")
-    client = InferenceClient(token=HF_TOKEN)
+    client = InferenceClient(provider="featherless-ai", token=HF_TOKEN)
     try:
         response = client.chat.completions.create(
             model=HF_MODEL,
