@@ -1,10 +1,12 @@
 # ShopSpace AI Business Advisor
 
-Arabic RAG service for ShopSpace tenants. Retrieves information from the ShopSpace knowledge base, then uses `Qwen/Qwen2.5-7B-Instruct` through Hugging Face to produce a grounded Arabic response with source attribution.
+AI-powered RAG service for ShopSpace tenants in Alexandria. Retrieves relevant information from the ShopSpace knowledge base, then uses `Qwen/Qwen2.5-7B-Instruct` through Hugging Face to produce grounded responses with source attribution.
+
+The system supports **both Arabic and English**, automatically detects the user's language, retrieves matching knowledge-base content, and responds in the same language.
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │ Frontend / Backend                                  │
 │ (sends questions to /chat endpoint)                 │
@@ -13,7 +15,8 @@ Arabic RAG service for ShopSpace tenants. Retrieves information from the ShopSpa
                  ▼
 ┌─────────────────────────────────────────────────────┐
 │ FastAPI Server (app/main.py)                        │
-│ ├─ CORS enabled for frontend integration            │
+│ ├─ Language Detection                               │
+│ ├─ Greeting Handling                                │
 │ ├─ API Key validation                               │
 │ └─ Request logging                                  │
 └────────────────┬────────────────────────────────────┘
@@ -29,124 +32,142 @@ Arabic RAG service for ShopSpace tenants. Retrieves information from the ShopSpa
     ┌──────────────┐  ┌─────────────┐
     │Vector Store  │  │HuggingFace  │
     │(Chroma)      │  │Inference API│
-    └──────────────┘  └─────────────┘
-         ▲
-         │
-    ┌────┴──────────────┐
-    │ Knowledge Base    │
-    ├─ general_guides/  │
-    └─ business_guides/ │
-    └────────────────── ┘
+    └──────┬───────┘  └─────────────┘
+           │
+     ┌─────┴──────────────┐
+     │ Knowledge Base     │
+     ├─ Arabic guides     │
+     └─ English guides    │
+     └────────────────────┘
 ```
 
 ## Project Structure
 
-```
+```text
 ai-advisor/
 ├── app/
-│   ├── __init__.py          # Package marker
+│   ├── __init__.py
 │   ├── main.py              # FastAPI application & endpoints
 │   ├── config.py            # Configuration from environment
 │   ├── database.py          # SQLite session/message storage
 │   ├── ingest.py            # Knowledge base ingestion into Chroma
 │   ├── llm.py               # Qwen LLM integration
-│   └── rag.py               # Retriever (vector search)
-├── .env.example             # Environment template
-├── Dockerfile               # Docker image for HF Spaces
-├── requirements.txt         # Python dependencies
-├── DEPLOYMENT.md            # Deployment guide
-├── README.md                # This file
-└── .gitignore               # Git ignore rules
+│   ├── rag.py               # Language-aware vector retrieval
+│   └── lang.py              # Arabic/English detection
+├── general_guides/
+│   ├── *_ar.md              # Arabic general guides
+│   └── *_en.md              # English general guides
+├── business_guides/
+│   ├── *_ar.md              # Arabic business guides
+│   └── *_en.md              # English business guides
+├── .env.example
+├── Dockerfile
+├── requirements.txt
+├── DEPLOYMENT.md
+├── README.md
+└── .gitignore
 ```
 
 ## Knowledge Base
 
-- **`general_guides/`**: 7 guides about location selection, rental, licenses, contracts, checklists, FAQs, and Alexandria areas
-- **`business_guides/`**: 19 business-specific setup guides
+* **`general_guides/`**: General guides covering location selection, rental, licenses, contracts, checklists, FAQs, and Alexandria areas.
+* **`business_guides/`**: Business-specific setup guides for different business types.
 
-Each guide has YAML frontmatter for metadata:
+Each guide is available in **Arabic and English** and uses YAML frontmatter for metadata:
+
 ```yaml
 ---
 title: "Guide Title"
-category: "location" | "legal" | "financial" | "operations"
-business_type: "cafe" | "restaurant" | "retail" | "office" | "general"
-language: "ar"
+category: "location"
+business_type: "cafe"
+language: "en"
 version: "1.0"
 last_reviewed: "2024-01-15"
 ---
 ```
 
+The `language` field is used to match retrieved content with the user's language.
+
 ## Technology Stack
 
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| **Web Framework** | FastAPI | REST API with automatic documentation |
-| **Server** | Uvicorn | ASGI server with WebSocket support |
-| **LLM** | Qwen 2.5-7B-Instruct | Arabic language model via HuggingFace |
-| **Vector Store** | Chroma | Persistent vector embeddings for retrieval |
-| **Embeddings** | Sentence-Transformers | Multilingual-e5-small for semantic search |
-| **Database** | SQLite | Session and message persistence |
-| **Deployment** | Docker | Containerized for HuggingFace Spaces |
+| Component         | Technology            | Purpose                               |
+| ----------------- | --------------------- | ------------------------------------- |
+| **Web Framework** | FastAPI               | REST API with automatic documentation |
+| **Server**        | Uvicorn               | ASGI server                           |
+| **LLM**           | Qwen 2.5-7B-Instruct  | Response generation                   |
+| **Vector Store**  | Chroma                | Persistent vector embeddings          |
+| **Embeddings**    | Sentence-Transformers | Multilingual semantic search          |
+| **Database**      | SQLite                | Session and message persistence       |
+| **Deployment**    | Docker                | Containerized deployment              |
 
 ## Core Modules
 
 ### `main.py` - FastAPI Application
-- **`POST /chat`**: Main endpoint for questions
-  - Validates API key if configured
-  - Manages sessions (UUID-based)
-  - Stores user messages and AI responses
-  - Logs all requests with unique IDs
-  
-- **`GET /sessions/{session_id}/messages`**: Retrieve conversation history
-  
-- **`GET /health`**: Health check with knowledge base status
-  
-- **`GET /`**: API information endpoint
 
-### `rag.py` - Retriever (Vector Search)
+* **`POST /chat`**: Main endpoint for questions
+
+  * Detects Arabic or English
+  * Handles simple greetings directly
+  * Retrieves relevant knowledge
+  * Generates the response
+  * Returns source attribution
+
+* **`GET /sessions/{session_id}/messages`**: Retrieve conversation history
+
+* **`GET /health`**: Health check with knowledge base status
+
+* **`GET /`**: API information endpoint
+
+### `lang.py` - Language Detection
+
+Provides lightweight Arabic/English detection and greeting handling.
+
 ```python
-from app.rag import retriever
-
-matches = retriever.search("عايز أفتح كافيه", limit=5)
-# Returns: [{"content": "...", "metadata": {...}, "distance": 0.15}, ...]
+language = detect_language(question)
 ```
 
-- Lazy-loads embedding model on first use
-- Caches model and collection for performance
-- Returns matched chunks with similarity scores
+Returns:
+
+```text
+ar
+```
+
+or:
+
+```text
+en
+```
+
+### `rag.py` - Retriever
+
+Retrieves semantically relevant chunks while preferring content in the same language as the user's question.
+
+```python
+matches = retriever.search(
+    "What are the best areas in Alexandria for a café?",
+    limit=5
+)
+```
 
 ### `ingest.py` - Knowledge Base Ingestion
+
 ```bash
-python -m app.ingest  # Builds vector store from guides
+python -m app.ingest
 ```
 
-- Parses YAML frontmatter from markdown files
-- Splits documents into overlapping chunks
-- Generates embeddings using multilingual-e5-small
-- Stores in persistent Chroma collection
-- Indexes metadata for filtering
+* Parses YAML frontmatter
+* Splits Markdown documents into chunks
+* Generates multilingual embeddings
+* Stores vectors and metadata in Chroma
+* Stores document metadata in SQLite
 
-### LLM Responses
+### `llm.py` - LLM Integration
 
-The LLM is configured to:
-- Return **concise responses** (3-5 sentences maximum)
-- Avoid numbered lists and excessive formatting
-- Focus on direct answers to user questions
-- Maintain accuracy by using only provided context
-
-See `app/llm.py` for prompt configuration.
-
-### `database.py` - Session Management
-- SQLite database with 3 tables:
-  - `chat_sessions`: Session IDs, user IDs, creation timestamps
-  - `chat_messages`: User/assistant messages with sources
-  - `knowledge_documents`: Ingested document metadata
-- Transaction support with context managers
-- JSON serialization for sources
+The LLM uses separate Arabic and English prompts and templates to ensure responses match the user's language and remain grounded in the retrieved context.
 
 ## API Usage
 
-### Example: Ask a Question
+### Example
 
 ```bash
 curl -X POST "http://localhost:8000/chat" \
@@ -155,34 +176,38 @@ curl -X POST "http://localhost:8000/chat" \
   -d '{
     "user_id": "tenant-123",
     "session_id": null,
-    "message": "عايز أفتح كافيه، أنسب منطقة فين؟"
+    "message": "What are the best areas in Alexandria for a café?"
   }'
 ```
 
-### Response Structure
+### Response
 
 ```json
 {
-  "answer": "بناءً على المعلومات المتاحة في قاعدة بيانات ShopSpace، أنسب المناطق لفتح كافيه هي سموحة وكليوباترا بسبب القرب من الجامعات والحركة المرورية العالية."
+  "session_id": "example-session-id",
+  "answer": "When choosing a location for your café in Alexandria, consider your target customers, foot traffic, competition, and rental budget.",
+  "sources": [
+    {
+      "document_id": "example-document-id",
+      "title": "Alexandria Areas Guide",
+      "category": "location",
+      "business_type": "cafe"
+    }
+  ],
+  "disclaimer": "The information provided is general guidance and is not professional legal or financial advice."
 }
 ```
 
-**Note:** The API returns only the `answer` field by default for simplicity. Session history and source tracking are maintained server-side for future reference.
-
 ## Configuration
 
-Edit `.env` to customize behavior:
-
 ```env
-# Required
 HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxx
 
-# Optional (defaults shown)
 HF_MODEL=Qwen/Qwen2.5-7B-Instruct
-APP_API_KEY=                          # Leave empty for local dev
-TOP_K=5                               # Chunks to retrieve
-CHUNK_SIZE=900                        # Characters per chunk
-CHUNK_OVERLAP=150                     # Overlap for context
+APP_API_KEY=
+TOP_K=5
+CHUNK_SIZE=900
+CHUNK_OVERLAP=150
 ```
 
 ## Local Development
@@ -194,14 +219,16 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
-# Edit .env with your HF_TOKEN
 ```
+
+Add your `HF_TOKEN` to `.env`.
 
 ### Build Knowledge Base
 
+Run this after adding or modifying knowledge-base documents:
+
 ```powershell
 python -m app.ingest
-# Outputs: {"documents": 26, "chunks": 250}
 ```
 
 ### Run Server
@@ -212,95 +239,51 @@ uvicorn app.main:app --reload --port 8000
 
 ### Access Documentation
 
-Visit `http://localhost:8000/docs` for interactive Swagger UI
+Visit:
+
+```text
+http://localhost:8000/docs
+```
+
+for the interactive Swagger UI.
 
 ## Deployment
 
-See `docs/DEPLOYMENT.md` for detailed instructions on deploying to HuggingFace Spaces.
+See `DEPLOYMENT.md` for deployment instructions.
 
-### Quick Deployment
-1. Create Docker Space on HuggingFace
-2. Set Dockerfile to `ai-advisor/Dockerfile`
-3. Add Space secrets: `HF_TOKEN`, `APP_API_KEY`
-4. Space will build and deploy automatically
-5. Access at `https://<username>-<space-name>.hf.space`
+Required secrets:
 
-## Logging
-
-The application logs important events:
-
+```text
+HF_TOKEN
+APP_API_KEY
 ```
-2024-01-15 12:34:56 - app.main - INFO - [abc-def-123] Chat request from user_id=tenant-123
-2024-01-15 12:34:57 - app.rag - INFO - Found 5 matches for question
-2024-01-15 12:34:58 - app.llm - INFO - Calling Qwen LLM for response generation
-2024-01-15 12:35:00 - app.main - INFO - [abc-def-123] Chat completed successfully
-```
-
-Check these logs to debug issues.
-
-## Performance Characteristics
-
-| Operation | Time | Notes |
-|-----------|------|-------|
-| **Startup** | 5-10s | Loads embedding model to memory |
-| **Retrieval** | 100-200ms | Vector search in Chroma |
-| **LLM Response** | 1-5s | Depends on HF queue and response length |
-| **Total per request** | 2-6s | End-to-end time after warmup |
 
 ## Troubleshooting
 
 ### "Knowledge base is not available"
-- Run `python -m app.ingest` to build vector store
-- Ensure `general_guides/` and `business_guides/` exist
-- Check file permissions
+
+Run:
+
+```powershell
+python -m app.ingest
+```
+
+Then check:
+
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/health" -Method Get
+```
+
+Make sure `general_guides/` and `business_guides/` contain the Markdown knowledge-base files.
 
 ### "HF_TOKEN is not configured"
-- Set `HF_TOKEN` in `.env` or HF Space secrets
-- Ensure token has permission for Qwen model
 
-### OOM (Out of Memory)
-- Reduce `TOP_K` (fewer chunks retrieved)
-- Reduce `CHUNK_SIZE` (smaller text pieces)
-- Use lighter embedding model
+Set `HF_TOKEN` in `.env` or your deployment secrets.
 
 ### Slow responses
-- First request warms up embedding model (normal)
-- Check HF queue status if LLM is slow
-- Monitor Space resources if deployed
 
-## Integration Notes
-
-For backend/frontend integration:
-
-1. **Call the `/chat` endpoint** with user messages
-2. **Pass session IDs** for multi-turn conversations
-3. **Display the disclaimer** along with response
-4. **Show source attributions** from the response
-5. **Handle 503 errors** gracefully (knowledge base not ready)
-
-Example integration:
-```python
-session_id = None  # First message
-
-while True:
-    message = input("Your question: ")
-    
-    response = requests.post(
-        f"{api_url}/chat",
-        json={
-            "user_id": "current_user",
-            "session_id": session_id,
-            "message": message
-        },
-        headers={"X-API-Key": api_key}
-    ).json()
-    
-    print(f"Answer: {response['answer']}")
-    print(f"Sources: {response['sources']}")
-    
-    session_id = response['session_id']  # Reuse for follow-ups
-```
+The first request may take longer while the embedding model is loaded. Subsequent requests should be faster.
 
 ## License
 
-Part of ShopSpace AI Business Advisory System.
+Part of the ShopSpace AI Business Advisory System.
