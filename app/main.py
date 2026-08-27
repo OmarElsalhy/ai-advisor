@@ -14,11 +14,14 @@ from .database import add_message, ensure_session, get_messages, initialize
 from .ingest import COLLECTION_NAME, ingest
 from .llm import answer
 from .rag import retriever
+from .lang import detect_language, is_greeting
+
 
 logger = logging.getLogger(__name__)
 
 # Logging configuration
 import sys
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -44,7 +47,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title="ShopSpace AI Business Advisor",
     version="1.0.0",
-    description="Arabic RAG API powered by Qwen and the ShopSpace knowledge base.",
+    description="Arabic and English RAG API powered by Qwen and the ShopSpace knowledge base.",
     lifespan=lifespan,
 )
 
@@ -93,7 +96,10 @@ def verify_api_key(x_api_key: str | None = Header(default=None)) -> None:
     if x_api_key and secrets.compare_digest(x_api_key, APP_API_KEY):
         return
 
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key")
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or missing API key",
+    )
 
 
 @app.get("/health", tags=["system"])
@@ -107,52 +113,97 @@ def health() -> dict:
         return {
             "status": "ok",
             "knowledge_base": "ready",
-            "chunks_indexed": count
+            "chunks_indexed": count,
         }
     except Exception as e:
         logger.warning(f"Health check: Knowledge base not ready - {str(e)}")
         return {
             "status": "degraded",
             "knowledge_base": "not_ready",
-            "error": str(e)
+            "error": str(e),
         }
 
 
-@app.post("/chat", response_model=ChatResponse, tags=["advisor"], dependencies=[Depends(verify_api_key)])
+@app.post(
+    "/chat",
+    response_model=ChatResponse,
+    tags=["advisor"],
+    dependencies=[Depends(verify_api_key)],
+)
 def chat(request: ChatRequest, http_request: Request):
     request_id = str(uuid.uuid4())
-    logger.info(f"[{request_id}] Chat request from user_id={request.user_id}, session_id={request.session_id}")
+    logger.info(
+        f"[{request_id}] Chat request from user_id={request.user_id}, "
+        f"session_id={request.session_id}"
+    )
 
     try:
         session_id = ensure_session(request.session_id, request.user_id)
         add_message(session_id, "user", request.message)
         logger.debug(f"[{request_id}] Message saved to session {session_id}")
 
+        # Handle simple greetings without using RAG or the LLM.
+        if is_greeting(request.message):
+            language = detect_language(request.message)
+
+            response_text = (
+                "وعليكم السلام! كيف يمكنني مساعدتك؟"
+                if language == "ar"
+                else "Hello! How can I help you?"
+            )
+
+            add_message(session_id, "assistant", response_text, [])
+            logger.info(f"[{request_id}] Greeting handled directly")
+
+            return {
+                "session_id": session_id,
+                "answer": response_text,
+                "sources": [],
+                "disclaimer": DISCLAIMER,
+            }
+
         matches = retriever.search(request.message)
+
         if not matches:
-            logger.warning(f"[{request_id}] No matches found in knowledge base")
-            raise HTTPException(status_code=503, detail="Knowledge base is not available")
+            logger.warning(
+                f"[{request_id}] No matches found in knowledge base"
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Knowledge base is not available",
+            )
 
         context = "\n\n".join(
-            f"[المصدر: {item['metadata']['title']}]\n{item['content']}" for item in matches
+            f"[المصدر: {item['metadata']['title']}]\n{item['content']}"
+            for item in matches
         )
-        logger.debug(f"[{request_id}] Retrieved {len(matches)} matches from knowledge base")
+
+        logger.debug(
+            f"[{request_id}] Retrieved {len(matches)} matches from knowledge base"
+        )
 
         try:
             response_text = answer(request.message, context)
             logger.debug(f"[{request_id}] Generated response from LLM")
         except RuntimeError as error:
             logger.error(f"[{request_id}] LLM error: {str(error)}")
-            raise HTTPException(status_code=503, detail=str(error)) from error
+            raise HTTPException(
+                status_code=503,
+                detail=str(error),
+            ) from error
 
         sources: list[dict] = []
         seen: set[str] = set()
+
         for item in matches:
             metadata = item["metadata"]
             document_id = metadata["document_id"]
+
             if document_id in seen:
                 continue
+
             seen.add(document_id)
+
             sources.append(
                 {
                     "document_id": document_id,
@@ -163,7 +214,11 @@ def chat(request: ChatRequest, http_request: Request):
             )
 
         add_message(session_id, "assistant", response_text, sources)
-        logger.info(f"[{request_id}] Chat completed successfully for session {session_id}")
+
+        logger.info(
+            f"[{request_id}] Chat completed successfully "
+            f"for session {session_id}"
+        )
 
         return {
             "session_id": session_id,
@@ -174,17 +229,31 @@ def chat(request: ChatRequest, http_request: Request):
 
     except HTTPException:
         raise
+
     except Exception as e:
-        logger.error(f"[{request_id}] Unexpected error: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Internal server error") from e
+        logger.error(
+            f"[{request_id}] Unexpected error: {str(e)}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error",
+        ) from e
 
 
-@app.get("/sessions/{session_id}/messages", tags=["advisor"], dependencies=[Depends(verify_api_key)])
+@app.get(
+    "/sessions/{session_id}/messages",
+    tags=["advisor"],
+    dependencies=[Depends(verify_api_key)],
+)
 def session_messages(session_id: str) -> dict:
     logger.info(f"Fetching messages for session {session_id}")
     messages = get_messages(session_id)
     logger.info(f"Retrieved {len(messages)} messages for session {session_id}")
-    return {"session_id": session_id, "messages": messages}
+    return {
+        "session_id": session_id,
+        "messages": messages,
+    }
 
 
 @app.get("/", tags=["system"])
@@ -199,5 +268,5 @@ def root() -> dict:
             "messages": "GET /sessions/{session_id}/messages - Get conversation history",
             "health": "GET /health - Health check",
             "docs": "GET /docs - Swagger UI documentation",
-        }
+        },
     }
